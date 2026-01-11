@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tailwind Color Gradient Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .color-swatch {
+            transition: transform 0.2s;
+        }
+        .color-swatch:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="max-w-4xl mx-auto">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">Tailwind Color Gradient Generator</h1>
+            <p class="text-gray-600 mb-8">Generate perceptually accurate color palettes using OKLCH color space</p>
+
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <div class="mb-6">
+                    <label for="colorInput" class="block text-sm font-medium text-gray-700 mb-2">
+                        Choose your base color (will be placed at 500)
+                    </label>
+                    <div class="flex gap-4 items-center">
+                        <input
+                            type="color"
+                            id="colorInput"
+                            value="#3b82f6"
+                            class="h-12 w-24 rounded cursor-pointer border-2 border-gray-300"
+                        >
+                        <input
+                            type="text"
+                            id="colorHex"
+                            value="#3b82f6"
+                            placeholder="#000000"
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                        <button
+                            id="generateBtn"
+                            class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                        >
+                            Generate
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="paletteContainer" class="space-y-2">
+                <!-- Palette will be generated here -->
+            </div>
+
+            <div class="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
+                <h2 class="text-lg font-semibold text-blue-900 mb-2">About OKLCH</h2>
+                <p class="text-blue-800 text-sm">
+                    This generator uses the OKLCH color space for perceptually uniform color gradients.
+                    Unlike HSL, OKLCH maintains consistent perceived lightness across all hues,
+                    allowing the algorithm to adjust hue and chroma to create more natural-looking color scales.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Color conversion utilities
+
+        // Convert hex to RGB
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16) / 255,
+                g: parseInt(result[2], 16) / 255,
+                b: parseInt(result[3], 16) / 255
+            } : null;
+        }
+
+        // Convert RGB to linear RGB
+        function rgbToLinear(c) {
+            return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        }
+
+        // Convert linear RGB to RGB
+        function linearToRgb(c) {
+            return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+        }
+
+        // Convert linear RGB to Oklab
+        function linearRgbToOklab(r, g, b) {
+            const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+            const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+            const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+
+            const l_ = Math.cbrt(l);
+            const m_ = Math.cbrt(m);
+            const s_ = Math.cbrt(s);
+
+            return {
+                L: 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                a: 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                b: 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+            };
+        }
+
+        // Convert Oklab to linear RGB
+        function oklabToLinearRgb(L, a, b) {
+            const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+            const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+            const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+
+            const l = l_ * l_ * l_;
+            const m = m_ * m_ * m_;
+            const s = s_ * s_ * s_;
+
+            return {
+                r: +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                g: -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                b: -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+            };
+        }
+
+        // Convert RGB to Oklab
+        function rgbToOklab(rgb) {
+            const r = rgbToLinear(rgb.r);
+            const g = rgbToLinear(rgb.g);
+            const b = rgbToLinear(rgb.b);
+            return linearRgbToOklab(r, g, b);
+        }
+
+        // Convert Oklab to RGB
+        function oklabToRgb(lab) {
+            const linear = oklabToLinearRgb(lab.L, lab.a, lab.b);
+            return {
+                r: linearToRgb(linear.r),
+                g: linearToRgb(linear.g),
+                b: linearToRgb(linear.b)
+            };
+        }
+
+        // Convert Oklab to OKLCH
+        function oklabToOklch(lab) {
+            const C = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+            const H = Math.atan2(lab.b, lab.a) * 180 / Math.PI;
+            return {
+                L: lab.L,
+                C: C,
+                H: H >= 0 ? H : H + 360
+            };
+        }
+
+        // Convert OKLCH to Oklab
+        function oklchToOklab(lch) {
+            const hRad = lch.H * Math.PI / 180;
+            return {
+                L: lch.L,
+                a: lch.C * Math.cos(hRad),
+                b: lch.C * Math.sin(hRad)
+            };
+        }
+
+        // Clamp RGB values
+        function clampRgb(rgb) {
+            return {
+                r: Math.max(0, Math.min(1, rgb.r)),
+                g: Math.max(0, Math.min(1, rgb.g)),
+                b: Math.max(0, Math.min(1, rgb.b))
+            };
+        }
+
+        // Convert RGB to hex
+        function rgbToHex(rgb) {
+            const toHex = (c) => {
+                const hex = Math.round(c * 255).toString(16);
+                return hex.length === 1 ? '0' + hex : hex;
+            };
+            return '#' + toHex(rgb.r) + toHex(rgb.g) + toHex(rgb.b);
+        }
+
+        // Generate color palette
+        function generatePalette(baseColor) {
+            const rgb = hexToRgb(baseColor);
+            if (!rgb) return null;
+
+            const oklab = rgbToOklab(rgb);
+            const oklch = oklabToOklch(oklab);
+
+            // Define lightness values for each shade
+            // These are calibrated to match Tailwind's visual progression
+            const shades = {
+                50: { L: 0.97, chromaScale: 0.2 },
+                100: { L: 0.93, chromaScale: 0.3 },
+                200: { L: 0.85, chromaScale: 0.5 },
+                300: { L: 0.75, chromaScale: 0.7 },
+                400: { L: 0.65, chromaScale: 0.85 },
+                500: { L: oklch.L, chromaScale: 1.0 },  // Base color
+                600: { L: Math.max(0.45, oklch.L * 0.85), chromaScale: 1.05 },
+                700: { L: Math.max(0.35, oklch.L * 0.7), chromaScale: 1.0 },
+                800: { L: Math.max(0.25, oklch.L * 0.55), chromaScale: 0.9 },
+                900: { L: Math.max(0.18, oklch.L * 0.4), chromaScale: 0.8 },
+                950: { L: Math.max(0.12, oklch.L * 0.25), chromaScale: 0.6 }
+            };
+
+            const palette = {};
+
+            for (const [shade, { L, chromaScale }] of Object.entries(shades)) {
+                // Adjust chroma to maintain vibrance
+                const C = oklch.C * chromaScale;
+
+                // For very light colors, reduce chroma more to avoid pastel washout
+                const adjustedC = L > 0.9 ? C * 0.5 : C;
+
+                // Convert back to RGB
+                const newOklch = { L, C: adjustedC, H: oklch.H };
+                const newOklab = oklchToOklab(newOklch);
+                const newRgb = clampRgb(oklabToRgb(newOklab));
+                const hex = rgbToHex(newRgb);
+
+                palette[shade] = {
+                    hex,
+                    oklch: newOklch
+                };
+            }
+
+            return palette;
+        }
+
+        // Display palette
+        function displayPalette(palette) {
+            const container = document.getElementById('paletteContainer');
+            container.innerHTML = '';
+
+            for (const [shade, color] of Object.entries(palette)) {
+                const shadeDiv = document.createElement('div');
+                shadeDiv.className = 'bg-white rounded-lg shadow-sm overflow-hidden color-swatch';
+
+                // Determine if text should be light or dark based on lightness
+                const textColor = color.oklch.L > 0.6 ? 'text-gray-900' : 'text-white';
+
+                shadeDiv.innerHTML = `
+                    <div class="flex items-stretch">
+                        <div
+                            class="w-24 flex-shrink-0"
+                            style="background-color: ${color.hex};"
+                        ></div>
+                        <div class="flex-1 px-6 py-4 flex items-center justify-between">
+                            <div>
+                                <div class="text-sm font-semibold text-gray-900">${shade}</div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    L: ${color.oklch.L.toFixed(2)}
+                                    C: ${color.oklch.C.toFixed(3)}
+                                    H: ${color.oklch.H.toFixed(1)}°
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-4">
+                                <code class="text-sm font-mono bg-gray-100 px-3 py-1 rounded">${color.hex}</code>
+                                <button
+                                    onclick="copyToClipboard('${color.hex}')"
+                                    class="px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded transition"
+                                >
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(shadeDiv);
+            }
+        }
+
+        // Copy to clipboard
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Visual feedback would go here
+                console.log('Copied:', text);
+            });
+        }
+
+        // Event listeners
+        document.getElementById('colorInput').addEventListener('input', (e) => {
+            document.getElementById('colorHex').value = e.target.value;
+        });
+
+        document.getElementById('colorHex').addEventListener('input', (e) => {
+            const hex = e.target.value;
+            if (/^#[0-9A-F]{6}$/i.test(hex)) {
+                document.getElementById('colorInput').value = hex;
+            }
+        });
+
+        document.getElementById('generateBtn').addEventListener('click', () => {
+            const color = document.getElementById('colorInput').value;
+            const palette = generatePalette(color);
+            if (palette) {
+                displayPalette(palette);
+            }
+        });
+
+        // Generate initial palette
+        window.addEventListener('DOMContentLoaded', () => {
+            const palette = generatePalette('#3b82f6');
+            displayPalette(palette);
+        });
+    </script>
+</body>
+</html>
