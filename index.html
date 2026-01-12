@@ -23,7 +23,7 @@
             <div class="bg-white rounded-lg shadow-md p-6 mb-8">
                 <div class="mb-6">
                     <label for="colorInput" class="block text-sm font-medium text-gray-700 mb-2">
-                        Choose your base color (will be placed at 500)
+                        Choose any color — it will be placed at its natural shade
                     </label>
                     <div class="flex gap-4 items-center">
                         <input
@@ -178,6 +178,106 @@
             return '#' + toHex(rgb.r) + toHex(rgb.g) + toHex(rgb.b);
         }
 
+        // Fixed lightness targets for each Tailwind shade
+        // These are calibrated to match Tailwind's visual progression
+        const SHADE_TARGETS = {
+            50:  { L: 0.97, chromaScale: 0.25 },
+            100: { L: 0.93, chromaScale: 0.35 },
+            200: { L: 0.86, chromaScale: 0.55 },
+            300: { L: 0.76, chromaScale: 0.75 },
+            400: { L: 0.66, chromaScale: 0.90 },
+            500: { L: 0.55, chromaScale: 1.0 },
+            600: { L: 0.45, chromaScale: 1.0 },
+            700: { L: 0.37, chromaScale: 0.95 },
+            800: { L: 0.28, chromaScale: 0.85 },
+            900: { L: 0.21, chromaScale: 0.75 },
+            950: { L: 0.14, chromaScale: 0.55 }
+        };
+
+        // Hue with peak perceptual brightness in OKLCH (yellow ~102°)
+        // and the hue with lowest perceptual brightness (blue ~265°)
+        const BRIGHT_HUE = 102;
+        const DARK_HUE = 265;
+
+        // Calculate how far a hue is from the "bright" end of the spectrum
+        // Returns 0-1 where 0 = yellow (bright), 1 = blue (dark)
+        function getHueBrightnessFactor(h) {
+            // Normalize the hue distance from yellow (bright) to blue (dark)
+            // Yellow is at ~102°, blue at ~265°
+            // We want to know where on the bright-dark spectrum this hue sits
+
+            // Calculate angular distance from bright hue
+            let distFromBright = Math.abs(h - BRIGHT_HUE);
+            if (distFromBright > 180) distFromBright = 360 - distFromBright;
+
+            // Calculate angular distance from dark hue
+            let distFromDark = Math.abs(h - DARK_HUE);
+            if (distFromDark > 180) distFromDark = 360 - distFromDark;
+
+            // Return ratio: 0 = at bright hue, 1 = at dark hue
+            return distFromBright / (distFromBright + distFromDark);
+        }
+
+        // Shift hue toward warmer (for light shades) or cooler (for dark shades)
+        // The amount of shift depends on how far we are from the anchor lightness
+        function shiftHue(baseHue, targetL, anchorL) {
+            const lightnessDelta = targetL - anchorL;  // positive = going lighter
+
+            // Maximum hue shift in degrees (tuned by eye to match Tailwind)
+            const maxShift = 15;
+
+            // How much to shift based on lightness change
+            // Going lighter → shift toward yellow/warm (reduce hue toward ~60-90)
+            // Going darker → shift toward blue/cool (increase hue toward ~240-270)
+            const shiftAmount = lightnessDelta * maxShift * 2;
+
+            // Direction depends on which side of the color wheel we're on
+            // For reds/oranges/yellows (0-120°): lighter = decrease, darker = increase
+            // For greens (120-180°): lighter = decrease toward yellow, darker = increase toward cyan
+            // For cyans/blues (180-300°): lighter = decrease toward green, darker = increase toward purple
+            // For purples/magentas (300-360°): lighter = decrease toward blue, darker = increase toward red
+
+            let newHue = baseHue;
+
+            if (lightnessDelta > 0) {
+                // Going lighter - shift toward yellow (warmer)
+                // Yellow is at ~102° in OKLCH
+                const targetWarmHue = 90;
+                const diff = targetWarmHue - baseHue;
+                // Normalize to -180 to 180
+                const normalizedDiff = ((diff + 180) % 360) - 180;
+                newHue = baseHue + (normalizedDiff * Math.abs(lightnessDelta) * 0.3);
+            } else {
+                // Going darker - shift toward blue (cooler)
+                // Blue is at ~265° in OKLCH
+                const targetCoolHue = 265;
+                const diff = targetCoolHue - baseHue;
+                // Normalize to -180 to 180
+                const normalizedDiff = ((diff + 180) % 360) - 180;
+                newHue = baseHue + (normalizedDiff * Math.abs(lightnessDelta) * 0.25);
+            }
+
+            // Keep hue in 0-360 range
+            return ((newHue % 360) + 360) % 360;
+        }
+
+        // Find the shade that best matches a given lightness
+        function findNaturalShade(L) {
+            const shades = Object.keys(SHADE_TARGETS).map(Number);
+            let closest = shades[0];
+            let minDiff = Math.abs(SHADE_TARGETS[closest].L - L);
+
+            for (const shade of shades) {
+                const diff = Math.abs(SHADE_TARGETS[shade].L - L);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closest = shade;
+                }
+            }
+
+            return closest;
+        }
+
         // Generate color palette
         function generatePalette(baseColor) {
             const rgb = hexToRgb(baseColor);
@@ -186,42 +286,41 @@
             const oklab = rgbToOklab(rgb);
             const oklch = oklabToOklch(oklab);
 
-            // Define lightness values for each shade
-            // These are calibrated to match Tailwind's visual progression
-            const shades = {
-                50: { L: 0.97, chromaScale: 0.2 },
-                100: { L: 0.93, chromaScale: 0.3 },
-                200: { L: 0.85, chromaScale: 0.5 },
-                300: { L: 0.75, chromaScale: 0.7 },
-                400: { L: 0.65, chromaScale: 0.85 },
-                500: { L: oklch.L, chromaScale: 1.0 },  // Base color
-                600: { L: Math.max(0.45, oklch.L * 0.85), chromaScale: 1.05 },
-                700: { L: Math.max(0.35, oklch.L * 0.7), chromaScale: 1.0 },
-                800: { L: Math.max(0.25, oklch.L * 0.55), chromaScale: 0.9 },
-                900: { L: Math.max(0.18, oklch.L * 0.4), chromaScale: 0.8 },
-                950: { L: Math.max(0.12, oklch.L * 0.25), chromaScale: 0.6 }
-            };
+            // Find which shade the input color naturally belongs to
+            const naturalShade = findNaturalShade(oklch.L);
+            const anchorL = oklch.L;  // The input color's lightness is our anchor
 
             const palette = {};
 
-            for (const [shade, { L, chromaScale }] of Object.entries(shades)) {
-                // Adjust chroma to maintain vibrance
+            for (const [shade, { L, chromaScale }] of Object.entries(SHADE_TARGETS)) {
+                // Scale chroma relative to the input color's chroma
                 const C = oklch.C * chromaScale;
 
-                // For very light colors, reduce chroma more to avoid pastel washout
+                // For very light shades, reduce chroma more to avoid pastel washout
                 const adjustedC = L > 0.9 ? C * 0.5 : C;
 
+                // Shift hue based on lightness change from anchor
+                const adjustedH = shiftHue(oklch.H, L, anchorL);
+
                 // Convert back to RGB
-                const newOklch = { L, C: adjustedC, H: oklch.H };
+                const newOklch = { L, C: adjustedC, H: adjustedH };
                 const newOklab = oklchToOklab(newOklch);
                 const newRgb = clampRgb(oklabToRgb(newOklab));
                 const hex = rgbToHex(newRgb);
 
                 palette[shade] = {
                     hex,
-                    oklch: newOklch
+                    oklch: newOklch,
+                    isInputColor: parseInt(shade) === naturalShade
                 };
             }
+
+            // Store original input info for display
+            palette._input = {
+                hex: baseColor,
+                oklch: oklch,
+                naturalShade: naturalShade
+            };
 
             return palette;
         }
@@ -231,9 +330,37 @@
             const container = document.getElementById('paletteContainer');
             container.innerHTML = '';
 
+            // Show info about where the input color landed
+            const inputInfo = palette._input;
+            if (inputInfo) {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 flex items-center gap-4';
+                infoDiv.innerHTML = `
+                    <div class="w-10 h-10 rounded-lg border-2 border-amber-300 flex-shrink-0" style="background-color: ${inputInfo.hex};"></div>
+                    <div>
+                        <div class="text-sm font-medium text-amber-900">
+                            Your color <code class="bg-amber-100 px-1.5 py-0.5 rounded">${inputInfo.hex}</code>
+                            has lightness <strong>L=${inputInfo.oklch.L.toFixed(2)}</strong>
+                        </div>
+                        <div class="text-sm text-amber-700">
+                            Best match: <strong>shade ${inputInfo.naturalShade}</strong> (target L=${SHADE_TARGETS[inputInfo.naturalShade].L.toFixed(2)})
+                        </div>
+                    </div>
+                `;
+                container.appendChild(infoDiv);
+            }
+
             for (const [shade, color] of Object.entries(palette)) {
+                // Skip the _input metadata
+                if (shade === '_input') continue;
+
+                const isHighlighted = color.isInputColor;
                 const shadeDiv = document.createElement('div');
-                shadeDiv.className = 'bg-white rounded-lg shadow-sm overflow-hidden color-swatch';
+                shadeDiv.className = `rounded-lg shadow-sm overflow-hidden color-swatch ${
+                    isHighlighted
+                        ? 'ring-2 ring-amber-400 ring-offset-2 bg-amber-50'
+                        : 'bg-white'
+                }`;
 
                 // Determine if text should be light or dark based on lightness
                 const textColor = color.oklch.L > 0.6 ? 'text-gray-900' : 'text-white';
@@ -241,12 +368,23 @@
                 shadeDiv.innerHTML = `
                     <div class="flex items-stretch">
                         <div
-                            class="w-24 flex-shrink-0"
+                            class="w-24 flex-shrink-0 relative"
                             style="background-color: ${color.hex};"
-                        ></div>
+                        >
+                            ${isHighlighted ? `
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                    <svg class="w-5 h-5 ${textColor}" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                            ` : ''}
+                        </div>
                         <div class="flex-1 px-6 py-4 flex items-center justify-between">
                             <div>
-                                <div class="text-sm font-semibold text-gray-900">${shade}</div>
+                                <div class="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                    ${shade}
+                                    ${isHighlighted ? '<span class="text-xs font-medium text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">Your color</span>' : ''}
+                                </div>
                                 <div class="text-xs text-gray-500 mt-1">
                                     L: ${color.oklch.L.toFixed(2)}
                                     C: ${color.oklch.C.toFixed(3)}
